@@ -62,12 +62,18 @@ input[disabled]{opacity:1;-webkit-text-fill-color:var(--ink)}
 .bar .amt{font-size:34px;font-weight:800;line-height:1.1}
 .bar button{background:var(--acc);color:var(--accInk)}
 .toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:99px;font-weight:700;font-size:14px}
+.fld{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line)!important;border-radius:10px;padding:12px!important;width:100%}
+.st{font-size:13px;font-weight:700;color:var(--mute);display:flex;justify-content:space-between;align-items:center;margin:-10px 0 14px}
+.st button{padding:4px 10px;font-size:13px}
 .empty{color:var(--mute);text-align:center;padding:30px 10px}
 </style>
 </head>
 <body>
 <div class="wrap" id="app"></div>
-<script>
+<script type="module">
+// ====== Paste your Firebase config here (leave apiKey empty to use without sync) ======
+const FIREBASE_CONFIG={apiKey:"AIzaSyA0YuUQD2oGNqFQwBlCXrlzJ6Wb8h-Wecg",authDomain:"alhilal-combo.firebaseapp.com",projectId:"alhilal-combo",storageBucket:"alhilal-combo.firebasestorage.app",messagingSenderId:"151895308802",appId:"1:151895308802:web:0811016c7375671f6d851b"};
+// =====================================================================================
 const KEY='alhilal_combos_v1';
 const P=(n,p)=>({id:'p'+Math.random().toString(36).slice(2,8),name:n,price:p,qty:0});
 const seedItems=()=>[['Muslin Zipper',313],['Cotton Jabla',40],['Dry Sheet',105],['Cap Set',55],['Muslin Knot Jabla',60],['Muslin Button Jabla',60],['Muslin Towel',115],['Own Muslin Towel',70],['Bath Towel',235],['Nappy',13],['Nail Cutter',165],['Cap Towel',100],['Ropper',150]].map(a=>P(...a));
@@ -75,7 +81,53 @@ const newCombo=n=>({id:'c'+Math.random().toString(36).slice(2,8),name:n,items:se
 let S=load();
 let editing=false;
 function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&d.length)return d}catch(e){}return [newCombo('Combo 1'),newCombo('Combo 2'),newCombo('Combo 3')]}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let U=+localStorage.getItem(KEY+'_t')||0,fb=null,user=null,authReady=false,offlineMode=false,status='',pushT,unsub,pendingRefresh=false;
+const syncOn=()=>!!FIREBASE_CONFIG.apiKey&&!offlineMode;
+function save(){U=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S));localStorage.setItem(KEY+'_t',U)}catch(e){}push()}
+const stText=()=>({synced:'● Synced',offline:'● Offline – will sync when online',error:'● Sync problem – check internet',saving:'● Saving…'}[status]||'');
+function setStatus(x){status=x;const e=document.getElementById('st');if(e)e.textContent=stText()}
+function push(){if(!fb||!user||!fb.ref)return;setStatus('saving');clearTimeout(pushT);pushT=setTimeout(()=>{fb.F.setDoc(fb.ref,{combos:JSON.stringify(S),updatedAt:U}).then(()=>setStatus(navigator.onLine?'synced':'offline'),()=>setStatus('error'))},400)}
+function refresh(){const a=document.activeElement;if(a&&a.tagName==='INPUT'&&app.contains(a)){pendingRefresh=true;return}const c=cur();c?combo(c):home()}
+document.addEventListener('focusout',()=>{if(pendingRefresh){pendingRefresh=false;setTimeout(refresh,50)}});
+function listen(){
+  if(unsub)unsub();
+  unsub=fb.F.onSnapshot(fb.ref,snap=>{
+    setStatus(snap.metadata.fromCache?'offline':'synced');
+    if(!snap.exists()){push();return}
+    const d=snap.data();
+    if(d.updatedAt>U){try{S=JSON.parse(d.combos);U=d.updatedAt;localStorage.setItem(KEY,d.combos);localStorage.setItem(KEY+'_t',U)}catch(e){}refresh()}
+    else if(d.updatedAt<U&&!snap.metadata.hasPendingWrites)push();
+  },()=>setStatus('error'));
+}
+async function initSync(){
+  if(!syncOn())return;
+  try{
+    const b='https://www.gstatic.com/firebasejs/10.14.1/';
+    const [A,Au,F]=await Promise.all([import(b+'firebase-app.js'),import(b+'firebase-auth.js'),import(b+'firebase-firestore.js')]);
+    const app0=A.initializeApp(FIREBASE_CONFIG);
+    const auth=Au.getAuth(app0);
+    const db=F.initializeFirestore(app0,{localCache:F.persistentLocalCache()});
+    fb={Au,F,auth,db};
+    Au.onAuthStateChanged(auth,u=>{
+      user=u;authReady=true;
+      if(u){fb.ref=F.doc(db,'users',u.uid,'data','combos');listen()}else{if(unsub)unsub();unsub=null;setStatus('')}
+      route();
+    });
+  }catch(e){offlineMode=true;authReady=true;route()}
+}
+function login(){
+  document.title='Sign in';
+  app.innerHTML=`<h1>Al Hilal Kids</h1><p class="sub">Sign in to sync your combos on all devices</p>
+  <div class="card" style="padding:14px;display:grid;gap:12px">
+  <input class="fld" id="em" type="email" placeholder="Email" autocomplete="username" autocapitalize="none">
+  <input class="fld" id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button class="pri" id="go" style="padding:13px">Sign in</button><div id="err" style="color:var(--warn);font-weight:700"></div></div>`;
+  const go=()=>{const e=document.getElementById('err');e.textContent='';
+    fb.Au.signInWithEmailAndPassword(fb.auth,document.getElementById('em').value.trim(),document.getElementById('pw').value)
+    .catch(x=>{e.textContent=/invalid|wrong|user-not-found/.test(x.code)?'Wrong email or password.':'Could not sign in ('+x.code+')'})};
+  document.getElementById('go').onclick=go;
+  document.getElementById('pw').onkeydown=ev=>{if(ev.key==='Enter')go()};
+}
 const num=v=>{const n=parseFloat(v);return isFinite(n)&&n>=0?n:0};
 const fmt=n=>'₹'+Math.round(n).toLocaleString('en-IN');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -88,7 +140,7 @@ function toast(t){const d=document.createElement('div');d.className='toast';d.te
 
 function home(){
   document.title='Al Hilal Kids – Combo Calculator';
-  app.innerHTML=`<h1>Al Hilal Kids</h1><p class="sub">Pick a combo to calculate the customer’s price</p>
+  app.innerHTML=`<h1>Al Hilal Kids</h1><p class="sub">Pick a combo to calculate the customer’s price</p>${syncOn()&&user?'<div class="st"><span id="st">'+stText()+'</span><button id="out">Sign out</button></div>':''}
   <div class="list">${S.map(c=>`<div class="combo" data-open="${c.id}" tabindex="0" role="button">
     <div><div class="n">${esc(c.name)}</div><div class="m">${c.items.filter(i=>i.qty>0).length} items selected</div></div><span style="flex:1"></span>
     <div class="n" style="flex:none">${fmt(total(c))}</div>
@@ -96,6 +148,7 @@ function home(){
   <button class="pri add" id="add">+ New combo</button>`;
   app.querySelectorAll('[data-open]').forEach(e=>{e.onclick=()=>location.hash=e.dataset.open;e.onkeydown=ev=>{if(ev.key==='Enter')e.click()}});
   app.querySelectorAll('[data-dup]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();const c=S.find(x=>x.id===b.dataset.dup);const d=JSON.parse(JSON.stringify(c));d.id='c'+Math.random().toString(36).slice(2,8);d.name=c.name+' copy';S.push(d);save();home()});
+  const so=document.getElementById('out');if(so)so.onclick=()=>fb.Au.signOut(fb.auth);
   document.getElementById('add').onclick=()=>{S.push(newCombo('Combo '+(S.length+1)));save();home()};
 }
 
@@ -139,9 +192,10 @@ function combo(c){
   };
 }
 
-function route(){const c=cur();if(c)combo(c);else{editing=false;home()}window.scrollTo(0,0)}
+function route(){if(syncOn()){if(!authReady){app.innerHTML='<p class="empty">Loading…</p>';return}if(!user){login();return}}const c=cur();if(c)combo(c);else{editing=false;home()}window.scrollTo(0,0)}
 window.addEventListener('hashchange',route);
 route();
+initSync();
 </script>
 </body>
 </html>
